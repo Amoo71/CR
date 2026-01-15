@@ -1,285 +1,328 @@
 import { useState } from 'react';
 
 /**
- * Home page component. Displays a form for entering Crunchyroll credentials
- * and fetches the user's profile via the API route. This component uses
- * client‑side state to manage form input and to display either the resulting
- * profile data or an error if the request fails.
+ * A minimal, modern interface for managing many Crunchyroll accounts. Users can
+ * paste credentials into the single input field at the bottom of the page in
+ * almost any format. The component extracts email/password pairs, displays
+ * them above the input as compact, rounded items and automatically checks
+ * each account via an API route. Valid accounts turn green and display
+ * their username; invalid accounts turn red. Clicking an item reveals a
+ * popup with the account’s email and password along with a copy button.
  */
 export default function Home() {
-  // Single account credentials
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [region, setRegion] = useState('');
-  // Single account result
-  const [profile, setProfile] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  // Multiple accounts management
-  const [showAccountsInput, setShowAccountsInput] = useState(false);
-  const [accountsText, setAccountsText] = useState('');
   const [accounts, setAccounts] = useState([]);
-  const [checkingAccounts, setCheckingAccounts] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const [activeId, setActiveId] = useState(null);
+  // Unique IDs for list items are generated using array indices and labels;
 
   /**
-   * Parses the accountsText and extracts email:password pairs using a regex.
-   * Populates the accounts state with objects containing email, password and status.
+   * Extracts account pairs from a string. Accepts patterns like
+   * `email:password` or `email password`. Extra surrounding text is ignored.
+   * @param {string} text
+   * @returns {Array<{email: string, password: string}>}
    */
-  const parseAccounts = () => {
-    const regex = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}):([^\s]+)/g;
-    const found = [];
+  function parseAccounts(text) {
+    const regex = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[:\s]+([^\s]+))?/g;
+    const result = [];
     let match;
-    while ((match = regex.exec(accountsText)) !== null) {
+    while ((match = regex.exec(text)) !== null) {
       const email = match[1];
-      const pass = match[2];
-      found.push({ email, password: pass, status: 'untested', profile: null, error: null });
-    }
-    setAccounts(found);
-  };
-
-  /**
-   * Submits the single account form; fetches profile via API.
-   */
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setProfile(null);
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await fetch('/api/profile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password, region }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Unexpected error');
+      const password = match[2];
+      if (email && password) {
+        result.push({ email, password });
       }
-      setProfile(data.profile);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
     }
+    return result;
   }
 
   /**
-   * Checks all parsed accounts by sending them to the API. Updates each account's
-   * status based on whether login and profile retrieval succeeds.
+   * Recursively searches an object for a property whose key contains
+   * `username`. Returns the first matching string it finds.
+   * @param {any} obj
    */
-  async function handleCheckAccounts() {
-    setCheckingAccounts(true);
+  function findUsername(obj) {
+    if (!obj || typeof obj !== 'object') return null;
+    for (const key of Object.keys(obj)) {
+      const value = obj[key];
+      if (typeof value === 'string' && key.toLowerCase().includes('username')) {
+        return value;
+      }
+      if (typeof value === 'object') {
+        const nested = findUsername(value);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Sends an account to the API to check its validity. Updates the account
+   * state when the response arrives.
+   * @param {number} index Index of the account in the state array
+   * @param {{email: string, password: string}} account
+   */
+  async function checkAccount(index, account) {
     try {
       const res = await fetch('/api/checkAccounts', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ accounts, region }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accounts: [account] }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Fehler beim Prüfen der Konten');
-      }
-      // Merge results back into accounts
-      const updated = accounts.map((acc) => {
-        const result = data.results.find((r) => r.email === acc.email && r.password === acc.password);
-        return {
-          ...acc,
-          status: result.ok ? 'ok' : 'Error',
-          profile: result.ok ? result.profile : null,
-          error: result.ok ? null : result.error,
-        };
+      const result = data.results && data.results[0];
+      setAccounts((prev) => {
+        const updated = [...prev];
+        if (!result) {
+          updated[index] = { ...updated[index], status: 'invalid', error: 'No response' };
+          return updated;
+        }
+        if (result.ok) {
+          const username = findUsername(result.profile) || updated[index].label;
+          updated[index] = {
+            ...updated[index],
+            status: 'valid',
+            profileName: username,
+            error: null,
+          };
+        } else {
+          // Check for specific error code indicating invalid auth token
+          const code = result.errorCode || result.error;
+          updated[index] = {
+            ...updated[index],
+            status: code === 'accounts.get_profile.invalid_auth_token' ? 'invalid' : 'invalid',
+            error: code,
+          };
+        }
+        return updated;
       });
-      setAccounts(updated);
     } catch (err) {
-      alert(err.message);
-    } finally {
-      setCheckingAccounts(false);
+      setAccounts((prev) => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], status: 'invalid', error: err.message };
+        return updated;
+      });
     }
   }
 
+  /**
+   * Handles the Enter key in the input field: parses accounts, adds them to
+   * state and triggers checking.
+   */
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addAccountsFromInput();
+    }
+  }
+
+  /**
+   * Parses the current input value and appends new accounts to the list. Then
+   * clears the input and checks each newly added account.
+   */
+  function addAccountsFromInput() {
+    const text = inputValue.trim();
+    if (!text) return;
+    const pairs = parseAccounts(text);
+    setInputValue('');
+    if (pairs.length === 0) return;
+    setAccounts((prev) => {
+      const updated = [...prev];
+      pairs.forEach((pair) => {
+        const label = `Acc${updated.length + 1}`;
+        updated.push({ id: label, email: pair.email, password: pair.password, label, status: 'checking', profileName: null, error: null });
+      });
+      return updated;
+    });
+    // Check each newly added account
+    pairs.forEach((pair, idx) => {
+      const index = accounts.length + idx;
+      checkAccount(index, pair);
+    });
+  }
+
+  /**
+   * Handles clicking on a list item: toggles visibility of details for that
+   * account.
+   * @param {string} id
+   */
+  function toggleDetails(id) {
+    setActiveId((prev) => (prev === id ? null : id));
+  }
+
+  /**
+   * Copies the account credentials to the clipboard.
+   */
+  function copyCredentials(acc) {
+    const text = `${acc.email}:${acc.password}`;
+    if (navigator && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    } else {
+      // Fallback: create a temporary input element
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+  }
+
+  /**
+   * Clears all stored accounts and hides any open details popups.
+   */
+  function clearAll() {
+    setAccounts([]);
+    setActiveId(null);
+  }
+
+  // Retrieve the active account object based on activeId
+  const activeAccount = accounts.find((acc) => acc.id === activeId);
+
   return (
     <div style={styles.container}>
-      <h1>Crunchyroll Account&nbsp;Manager</h1>
-      <p>
-        This tool uses the unofficial npm package&nbsp;
-        <a href="https://github.com/Mssjim/crunchyroll.js" target="_blank" rel="noopener noreferrer">crunchyroll.js</a>
-        to interact with the Crunchyroll API. Be aware that using this package may violate Crunchyroll’s Terms of Service;
-        you use this tool at your own risk.
-      </p>
-
-      {/* Single account form */}
-      <h2>Test a single account</h2>
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <div style={styles.inputGroup}>
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={styles.input}
-          />
-        </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
-          />
-        </div>
-        <div style={styles.inputGroup}>
-          <label htmlFor="region">Region (optional)</label>
-          <input
-            id="region"
-            type="text"
-            placeholder="z.B. de-DE oder pt-BR"
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            style={styles.input}
-          />
-        </div>
-        <button type="submit" disabled={loading} style={styles.button}>
-          {loading ? 'Loading…' : 'Retrieve profile'}
-        </button>
-      </form>
-      {error && <p style={{ color: '#ff6b6b' }}>Error: {error}</p>}
-      {profile && (
-        <div style={styles.profileBox}>
-          <h3>Profile</h3>
-          <pre style={styles.pre}>{JSON.stringify(profile, null, 2)}</pre>
-        </div>
-      )}
-
-      {/* Multiple accounts section */}
-      <hr style={{ margin: '2rem 0', borderColor: 'rgba(255,255,255,0.1)' }} />
-      <h2>Manage multiple accounts</h2>
-      <button
-        type="button"
-        onClick={() => setShowAccountsInput((v) => !v)}
-        style={{ ...styles.button, backgroundColor: '#0066cc' }}
-      >
-        {showAccountsInput ? 'Hide input' : 'Enter accounts'}
-      </button>
-      {showAccountsInput && (
-        <div style={{ marginTop: '1rem' }}>
-          <textarea
-            value={accountsText}
-            onChange={(e) => setAccountsText(e.target.value)}
-            placeholder="Paste your data here (e.g. some text mail@example.com:password other text)"
-            rows={6}
-            style={{ width: '100%', padding: '0.5rem', fontFamily: 'monospace', backgroundColor: 'rgba(255,255,255,0.05)', color: '#f5f5f5', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px' }}
-          />
-          <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
-            <button type="button" onClick={parseAccounts} style={styles.button}>
-              Parse accounts
-            </button>
-            <button
-              type="button"
-              onClick={handleCheckAccounts}
-              disabled={accounts.length === 0 || checkingAccounts}
-              style={{ ...styles.button, backgroundColor: '#2a9d8f' }}
-            >
-              {checkingAccounts ? 'Testing…' : 'Test accounts'}
-            </button>
-          </div>
-        </div>
-      )}
+      <h1 style={styles.title}>Crunchyroll Account Manager</h1>
+      <ul style={styles.list}>
+        {accounts.map((acc) => (
+          <li
+            key={acc.id}
+            onClick={() => toggleDetails(acc.id)}
+            style={{
+              ...styles.accountItem,
+              backgroundColor:
+                acc.status === 'valid'
+                  ? 'rgba(76, 175, 80, 0.25)'
+                  : acc.status === 'invalid'
+                  ? 'rgba(244, 67, 54, 0.25)'
+                  : 'rgba(255, 255, 255, 0.05)',
+              borderColor:
+                acc.status === 'valid'
+                  ? '#4caf50'
+                  : acc.status === 'invalid'
+                  ? '#f44336'
+                  : 'rgba(255, 255, 255, 0.2)',
+            }}
+          >
+            {acc.status === 'valid' && acc.profileName ? acc.profileName : acc.label}
+          </li>
+        ))}
+      </ul>
       {accounts.length > 0 && (
-        <div style={{ marginTop: '1rem' }}>
-          <h3>Found accounts ({accounts.length})</h3>
-          <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
-            {accounts.map((acc, idx) => (
-              <li
-                key={`${acc.email}-${idx}`}
-                style={{
-                  marginBottom: '0.5rem',
-                  padding: '0.5rem',
-                  borderRadius: '6px',
-                  backgroundColor: 'rgba(255,255,255,0.05)',
-                  color: '#f5f5f5',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                }}
-              >
-                <strong>{acc.email}</strong>: {acc.status}
-                {acc.error && <span style={{ color: '#ff6b6b' }}> – {acc.error}</span>}
-              </li>
-            ))}
-          </ul>
+        <button
+          onClick={clearAll}
+          style={{ ...styles.button, backgroundColor: '#f44336', marginBottom: '1rem' }}
+        >
+          Delete all
+        </button>
+      )}
+      {activeAccount && (
+        <div style={styles.popup}>
+          <p style={{ margin: 0, marginBottom: '0.5rem' }}>
+            <strong>{activeAccount.profileName || activeAccount.label}</strong>
+          </p>
+          <p style={{ margin: 0, marginBottom: '0.5rem' }}>{activeAccount.email}</p>
+          <p style={{ margin: 0, marginBottom: '0.5rem' }}>Password: {activeAccount.password}</p>
+          <button
+            onClick={() => copyCredentials(activeAccount)}
+            style={{ ...styles.button, width: '100%' }}
+          >
+            Copy credentials
+          </button>
         </div>
       )}
+      <div style={styles.inputContainer}>
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Paste credentials and press Enter…"
+          style={styles.inputField}
+        />
+      </div>
     </div>
   );
 }
 
 const styles = {
   container: {
-    maxWidth: '600px',
-    margin: '0 auto',
-    padding: '2rem',
-    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    lineHeight: 1.5,
-    color: '#f5f5f5',
-    backgroundColor: '#0a0a0a',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
     minHeight: '100vh',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1rem',
-    marginTop: '1rem',
-    marginBottom: '2rem',
-    padding: '1rem',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    border: '1px solid rgba(255,255,255,0.15)',
-    borderRadius: '8px',
-    backdropFilter: 'blur(10px)',
-    boxShadow: '0 4px 30px rgba(0, 0, 0, 0.3)',
-  },
-  inputGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
-  },
-  input: {
-    padding: '0.5rem',
-    fontSize: '1rem',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    border: '1px solid rgba(255,255,255,0.3)',
-    borderRadius: '6px',
+    backgroundColor: '#0a0a0a',
+    padding: '2rem 1rem',
     color: '#f5f5f5',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+  },
+  title: {
+    marginBottom: '1rem',
+    fontSize: '1.5rem',
+  },
+  list: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+    width: '100%',
+    maxWidth: '600px',
+    marginBottom: '2rem',
+    padding: 0,
+    listStyle: 'none',
+  },
+  accountItem: {
+    padding: '0.5rem 0.75rem',
+    borderRadius: '9999px',
+    border: '1px solid',
+    cursor: 'pointer',
+    transition: 'all 0.3s ease',
+    userSelect: 'none',
+    fontSize: '0.9rem',
+  },
+  popup: {
+    position: 'fixed',
+    bottom: '120px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backdropFilter: 'blur(10px)',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    borderRadius: '8px',
+    padding: '1rem',
+    boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
+    color: '#f5f5f5',
+    zIndex: 1000,
+    width: '280px',
+    textAlign: 'center',
+  },
+  inputContainer: {
+    width: '100%',
+    maxWidth: '600px',
+    position: 'fixed',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255,255,255,0.2)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: '30px',
+    padding: '0.5rem 1rem',
+    boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
+  },
+  inputField: {
+    width: '100%',
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: '#f5f5f5',
+    fontSize: '1rem',
   },
   button: {
-    padding: '0.75rem',
-    fontSize: '1rem',
+    padding: '0.5rem',
     backgroundColor: '#ff751a',
     color: '#fff',
     border: 'none',
     borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'background-color 0.2s ease',
-  },
-  profileBox: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(255,255,255,0.15)',
-    borderRadius: '8px',
-    padding: '1rem',
-    boxShadow: '0 4px 30px rgba(0,0,0,0.3)',
-    color: '#f5f5f5',
-  },
-  pre: {
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
-    overflowX: 'auto',
+    fontSize: '0.9rem',
   },
 };
