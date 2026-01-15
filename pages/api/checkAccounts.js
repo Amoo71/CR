@@ -31,8 +31,8 @@ export default async function handler(req, res) {
     if (!email || !password) {
       results.push({ ...acc, ok: false, error: 'Invalid account format' });
       count++;
-      // Pause after every 3 attempts
-      if (count % 3 === 0 && count < accounts.length) {
+      // Pause after every 5 attempts
+      if (count % 5 === 0 && count < accounts.length) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
       continue;
@@ -40,13 +40,19 @@ export default async function handler(req, res) {
     try {
       await cr.login(email, password, region || undefined);
       const profile = await cr.getProfile();
-      results.push({ email, password, ok: true, profile });
+      // When the profile contains an error code we treat it as invalid
+      if (profile && typeof profile === 'object' && profile.code) {
+        results.push({ email, password, ok: false, errorCode: profile.code, error: profile.code });
+      } else {
+        results.push({ email, password, ok: true, profile });
+      }
     } catch (err) {
-      results.push({ email, password, ok: false, error: err?.message || String(err) });
+      // Some errors may have a code property
+      results.push({ email, password, ok: false, errorCode: err?.code, error: err?.message || String(err) });
     }
     count++;
-    // Pause after every 3 successful/unsuccessful attempts except after last
-    if (count % 3 === 0 && count < accounts.length) {
+    // Pause after every 5 successful/unsuccessful attempts except after last
+    if (count % 5 === 0 && count < accounts.length) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
