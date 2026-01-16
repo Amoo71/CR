@@ -1,4 +1,4 @@
-import cr from 'crunchyroll.js';
+import Crunchyroll from 'crunchyroll.js';
 
 /**
  * API route to validate multiple Crunchyroll accounts. Receives an array of
@@ -39,7 +39,6 @@ export default async function handler(req, res) {
     }
     try {
       // Create a fresh Crunchyroll instance for each account to avoid session conflicts
-      const Crunchyroll = (await import('crunchyroll.js')).default;
       const crInstance = new Crunchyroll();
       
       await crInstance.login(email, password, region || undefined);
