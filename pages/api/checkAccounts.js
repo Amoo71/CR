@@ -1,5 +1,3 @@
-import Crunchyroll from 'crunchyroll.js';
-
 /**
  * API route to validate multiple Crunchyroll accounts. Receives an array of
  * objects with `email` and `password` fields and an optional region string. For
@@ -38,15 +36,18 @@ export default async function handler(req, res) {
       continue;
     }
     try {
-      // Create a fresh Crunchyroll instance for each account to avoid session conflicts
-      const crInstance = new Crunchyroll();
+      // Dynamic import to get a fresh module instance
+      const crModule = await import('crunchyroll.js');
+      const cr = crModule.default || crModule;
       
-      await crInstance.login(email, password, region || undefined);
-      const profile = await crInstance.getProfile();
+      await cr.login(email, password, region || undefined);
+      const profile = await cr.getProfile();
       
       // Logout to clean up session
       try {
-        await crInstance.logout();
+        if (typeof cr.logout === 'function') {
+          await cr.logout();
+        }
       } catch (logoutErr) {
         // Ignore logout errors
       }
