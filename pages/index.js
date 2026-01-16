@@ -156,6 +156,9 @@ export default function Home() {
    * @param {{email: string, password: string}} account
    */
   async function checkAccount(index, account) {
+    // Store the email for logging to avoid race conditions
+    const checkingEmail = account.email;
+    
     try {
       const res = await fetch('/api/checkSingleAccount', {
         method: 'POST',
@@ -163,15 +166,18 @@ export default function Home() {
         body: JSON.stringify({ email: account.email, password: account.password }),
       });
       const result = await res.json();
-      console.log(`[${index}] Response for ${account.email}:`, result);
+      console.log(`[${index}] Response for ${checkingEmail}:`, result);
+      
       setAccounts((prev) => {
         const updated = [...prev];
-        // Make sure the account at this index still exists
-        if (!updated[index]) {
-          return updated;
+        // Make sure the account at this index still exists AND has the same email
+        if (!updated[index] || updated[index].email !== checkingEmail) {
+          console.log(`[${index}] Skipping update - account mismatch or missing`);
+          return prev; // Return unchanged if mismatch
         }
+        
         if (!result) {
-          console.log(`[${index}] No result for ${updated[index].email}`);
+          console.log(`[${index}] No result for ${checkingEmail}`);
           updated[index] = { 
             ...updated[index], 
             status: 'invalid', 
@@ -180,9 +186,10 @@ export default function Home() {
           };
           return updated;
         }
+        
         if (result.ok) {
           const username = findUsername(result.profile);
-          console.log(`[${index}] VALID - Email: ${updated[index].email}, Username found: ${username}`);
+          console.log(`[${index}] VALID - Email: ${checkingEmail}, Username found: ${username}`);
           updated[index] = {
             ...updated[index],
             status: 'valid',
@@ -192,7 +199,7 @@ export default function Home() {
         } else {
           // Check for specific error code indicating invalid auth token
           const code = result.errorCode || result.error;
-          console.log(`[${index}] INVALID - Email: ${updated[index].email}, Error: ${code}`);
+          console.log(`[${index}] INVALID - Email: ${checkingEmail}, Error: ${code}`);
           updated[index] = {
             ...updated[index],
             status: 'invalid',
@@ -205,8 +212,8 @@ export default function Home() {
     } catch (err) {
       setAccounts((prev) => {
         const updated = [...prev];
-        if (!updated[index]) {
-          return updated;
+        if (!updated[index] || updated[index].email !== checkingEmail) {
+          return prev;
         }
         updated[index] = { 
           ...updated[index], 
