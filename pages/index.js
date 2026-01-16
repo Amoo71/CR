@@ -15,10 +15,10 @@ export default function Home() {
   // Unique IDs for list items are generated using array indices and labels;
 
   /**
-   * Fetch accounts from justpaste.it/nia8c only when 15 minutes have elapsed
+   * Fetch accounts from justpaste.it/nia8c only when 15 minutes have elapsed (server-side cache)
    */
   useEffect(() => {
-    async function fetchAccounts() {
+    async function fetchAndCheckAccounts() {
       setIsLoading(true);
       try {
         const response = await fetch('/api/fetchAccounts');
@@ -49,8 +49,16 @@ export default function Home() {
           
           const now = new Date();
           setLastChecked(now);
-          localStorage.setItem('lastChecked', now.toISOString());
-          localStorage.setItem('accounts', JSON.stringify(newAccounts));
+          
+          // Save to server cache
+          await fetch('/api/cache', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              accounts: newAccounts,
+              lastChecked: now.toISOString()
+            })
+          });
           
           // Check all accounts in parallel (fast but may have session conflicts)
           newAccounts.forEach((acc, idx) => {
@@ -64,44 +72,68 @@ export default function Home() {
       }
     }
     
-    // Load from localStorage on mount
-    const storedLastChecked = localStorage.getItem('lastChecked');
-    const storedAccounts = localStorage.getItem('accounts');
-    
-    if (storedLastChecked && storedAccounts) {
-      const lastCheckedDate = new Date(storedLastChecked);
-      const now = new Date();
-      const fifteenMinutes = 15 * 60 * 1000;
-      const timeSinceLastCheck = now - lastCheckedDate;
-      
-      if (timeSinceLastCheck < fifteenMinutes) {
-        // Less than 15 minutes - load from cache
-        setLastChecked(lastCheckedDate);
-        setAccounts(JSON.parse(storedAccounts));
-        setIsLoading(false);
+    async function loadCacheAndDecide() {
+      try {
+        // Load from server cache on mount
+        const cacheResponse = await fetch('/api/cache');
+        const cachedData = await cacheResponse.json();
         
-        // Set up timer for remaining time until 15 minutes
-        const remainingTime = fifteenMinutes - timeSinceLastCheck;
-        const timeoutId = setTimeout(() => {
-          fetchAccounts();
-        }, remainingTime);
+        if (cachedData.lastChecked && cachedData.accounts) {
+          const lastCheckedDate = new Date(cachedData.lastChecked);
+          const now = new Date();
+          const fifteenMinutes = 15 * 60 * 1000;
+          const timeSinceLastCheck = now - lastCheckedDate;
+          
+          if (timeSinceLastCheck < fifteenMinutes) {
+            // Less than 15 minutes - load from cache
+            setLastChecked(lastCheckedDate);
+            setAccounts(cachedData.accounts);
+            setIsLoading(false);
+            
+            // Set up timer for remaining time until 15 minutes
+            const remainingTime = fifteenMinutes - timeSinceLastCheck;
+            const timeoutId = setTimeout(() => {
+              fetchAndCheckAccounts();
+            }, remainingTime);
+            
+            // Set up 15-minute interval after initial timeout
+            const intervalId = setInterval(() => {
+              fetchAndCheckAccounts();
+            }, 900000);
+            
+            return () => {
+              clearTimeout(timeoutId);
+              clearInterval(intervalId);
+            };
+          } else {
+            // More than 15 minutes - fetch fresh data
+            await fetchAndCheckAccounts();
+          }
+        } else {
+          // No cache - fetch immediately
+          await fetchAndCheckAccounts();
+        }
         
-        return () => clearTimeout(timeoutId);
-      } else {
-        // More than 15 minutes - fetch fresh data
-        fetchAccounts();
+        // Set up 15-minute interval after initial load
+        const intervalId = setInterval(() => {
+          fetchAndCheckAccounts();
+        }, 900000);
+        
+        return () => clearInterval(intervalId);
+      } catch (err) {
+        console.error('Failed to load cache:', err);
+        // Fallback: fetch immediately
+        await fetchAndCheckAccounts();
+        
+        const intervalId = setInterval(() => {
+          fetchAndCheckAccounts();
+        }, 900000);
+        
+        return () => clearInterval(intervalId);
       }
-    } else {
-      // No cache - fetch immediately
-      fetchAccounts();
     }
     
-    // Set up 15-minute interval after initial load
-    const intervalId = setInterval(() => {
-      fetchAccounts();
-    }, 900000);
-    
-    return () => clearInterval(intervalId);
+    loadCacheAndDecide();
   }, []);
 
   /**
@@ -189,8 +221,12 @@ export default function Home() {
             profileName: null,
             error: 'No response' 
           };
-          // Save updated accounts to localStorage
-          localStorage.setItem('accounts', JSON.stringify(updated));
+          // Save updated accounts to server cache
+          fetch('/api/cache', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accounts: updated })
+          }).catch(err => console.error('Failed to update cache:', err));
           return updated;
         }
         
@@ -214,8 +250,12 @@ export default function Home() {
             error: code,
           };
         }
-        // Save updated accounts to localStorage
-        localStorage.setItem('accounts', JSON.stringify(updated));
+        // Save updated accounts to server cache
+        fetch('/api/cache', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accounts: updated })
+        }).catch(err => console.error('Failed to update cache:', err));
         return updated;
       });
     } catch (err) {
@@ -230,8 +270,12 @@ export default function Home() {
           profileName: null,
           error: err.message 
         };
-        // Save updated accounts to localStorage
-        localStorage.setItem('accounts', JSON.stringify(updated));
+        // Save updated accounts to server cache
+        fetch('/api/cache', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accounts: updated })
+        }).catch(err => console.error('Failed to update cache:', err));
         return updated;
       });
     }
