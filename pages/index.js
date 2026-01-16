@@ -15,7 +15,7 @@ export default function Home() {
   // Unique IDs for list items are generated using array indices and labels;
 
   /**
-   * Fetch accounts from justpaste.it/nia8c on component mount and every 15 minutes
+   * Fetch accounts from justpaste.it/nia8c only when 15 minutes have elapsed
    */
   useEffect(() => {
     async function fetchAccounts() {
@@ -46,7 +46,11 @@ export default function Home() {
             error: null,
           }));
           setAccounts(newAccounts);
-          setLastChecked(new Date());
+          
+          const now = new Date();
+          setLastChecked(now);
+          localStorage.setItem('lastChecked', now.toISOString());
+          localStorage.setItem('accounts', JSON.stringify(newAccounts));
           
           // Check all accounts in parallel (fast but may have session conflicts)
           newAccounts.forEach((acc, idx) => {
@@ -60,15 +64,43 @@ export default function Home() {
       }
     }
     
-    // Fetch immediately on mount
-    fetchAccounts();
+    // Load from localStorage on mount
+    const storedLastChecked = localStorage.getItem('lastChecked');
+    const storedAccounts = localStorage.getItem('accounts');
     
-    // Set up 15-minute interval (900000ms = 15 minutes)
+    if (storedLastChecked && storedAccounts) {
+      const lastCheckedDate = new Date(storedLastChecked);
+      const now = new Date();
+      const fifteenMinutes = 15 * 60 * 1000;
+      const timeSinceLastCheck = now - lastCheckedDate;
+      
+      if (timeSinceLastCheck < fifteenMinutes) {
+        // Less than 15 minutes - load from cache
+        setLastChecked(lastCheckedDate);
+        setAccounts(JSON.parse(storedAccounts));
+        setIsLoading(false);
+        
+        // Set up timer for remaining time until 15 minutes
+        const remainingTime = fifteenMinutes - timeSinceLastCheck;
+        const timeoutId = setTimeout(() => {
+          fetchAccounts();
+        }, remainingTime);
+        
+        return () => clearTimeout(timeoutId);
+      } else {
+        // More than 15 minutes - fetch fresh data
+        fetchAccounts();
+      }
+    } else {
+      // No cache - fetch immediately
+      fetchAccounts();
+    }
+    
+    // Set up 15-minute interval after initial load
     const intervalId = setInterval(() => {
       fetchAccounts();
     }, 900000);
     
-    // Cleanup interval on unmount
     return () => clearInterval(intervalId);
   }, []);
 
