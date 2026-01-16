@@ -152,6 +152,7 @@ export default function Home() {
       });
       const data = await res.json();
       const result = data.results && data.results[0];
+      console.log(`[${index}] Response for ${account.email}:`, result);
       setAccounts((prev) => {
         const updated = [...prev];
         // Make sure the account at this index still exists
@@ -159,6 +160,7 @@ export default function Home() {
           return updated;
         }
         if (!result) {
+          console.log(`[${index}] No result for ${updated[index].email}`);
           updated[index] = { 
             ...updated[index], 
             status: 'invalid', 
@@ -169,7 +171,7 @@ export default function Home() {
         }
         if (result.ok) {
           const username = findUsername(result.profile);
-          console.log('Profile for', updated[index].email, ':', result.profile, 'Username found:', username);
+          console.log(`[${index}] VALID - Email: ${updated[index].email}, Username found: ${username}`);
           updated[index] = {
             ...updated[index],
             status: 'valid',
@@ -179,6 +181,7 @@ export default function Home() {
         } else {
           // Check for specific error code indicating invalid auth token
           const code = result.errorCode || result.error;
+          console.log(`[${index}] INVALID - Email: ${updated[index].email}, Error: ${code}`);
           updated[index] = {
             ...updated[index],
             status: 'invalid',
