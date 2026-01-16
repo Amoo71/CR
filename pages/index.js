@@ -26,7 +26,18 @@ export default function Home() {
         const data = await response.json();
         
         if (data.accounts && data.accounts.length > 0) {
-          const newAccounts = data.accounts.map((pair, idx) => ({
+          // Remove duplicates based on email
+          const uniqueAccounts = [];
+          const seenEmails = new Set();
+          
+          for (const pair of data.accounts) {
+            if (!seenEmails.has(pair.email)) {
+              seenEmails.add(pair.email);
+              uniqueAccounts.push(pair);
+            }
+          }
+          
+          const newAccounts = uniqueAccounts.map((pair, idx) => ({
             id: `Acc${idx + 1}`,
             email: pair.email,
             password: pair.password,
@@ -98,14 +109,24 @@ export default function Home() {
 
   /**
    * Recursively searches an object for a property whose key contains
-   * `username`. Returns the first matching string it finds.
+   * `username` or common profile name fields. Returns the first matching string it finds.
    * @param {any} obj
    */
   function findUsername(obj) {
     if (!obj || typeof obj !== 'object') return null;
+    
+    // Try common username fields first
+    const commonFields = ['username', 'Username', 'name', 'displayName', 'display_name', 'account_id', 'email'];
+    for (const field of commonFields) {
+      if (obj[field] && typeof obj[field] === 'string') {
+        return obj[field];
+      }
+    }
+    
+    // Recursively search nested objects
     for (const key of Object.keys(obj)) {
       const value = obj[key];
-      if (typeof value === 'string' && key.toLowerCase().includes('username')) {
+      if (typeof value === 'string' && (key.toLowerCase().includes('username') || key.toLowerCase().includes('name'))) {
         return value;
       }
       if (typeof value === 'object') {
@@ -147,11 +168,12 @@ export default function Home() {
           return updated;
         }
         if (result.ok) {
-          const username = findUsername(result.profile) || updated[index].label;
+          const username = findUsername(result.profile);
+          console.log('Profile for', updated[index].email, ':', result.profile, 'Username found:', username);
           updated[index] = {
             ...updated[index],
             status: 'valid',
-            profileName: username,
+            profileName: username || updated[index].label,
             error: null,
           };
         } else {
