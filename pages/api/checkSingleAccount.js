@@ -1,6 +1,9 @@
+import cr from 'crunchyroll.js';
+
 /**
  * API route to check a SINGLE account only.
- * Uses dynamic import and forced cache busting to avoid session conflicts.
+ * The crunchyroll.js library has a session caching issue - each request
+ * should be completely isolated but Vercel may reuse function instances.
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,34 +17,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Force cache busting by adding timestamp to import
-    const timestamp = Date.now();
-    const modulePath = 'crunchyroll.js';
+    // Long delay to ensure previous request fully completed
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    // Delete all cached versions
-    Object.keys(require.cache).forEach(key => {
-      if (key.includes('crunchyroll')) {
-        delete require.cache[key];
-      }
-    });
-    
-    // Use require for immediate execution
-    const cr = require(modulePath);
-    
-    // Add delay before login
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
+    // Login with fresh credentials
     await cr.login(email, password, region || undefined);
+    
+    // Get profile immediately
     const profile = await cr.getProfile();
     
-    // Logout immediately and wait for it
+    // Logout and wait for complete cleanup
     try {
       await cr.logout();
-      // Extra delay after logout to ensure cleanup
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (err) {
-      // Ignore logout errors but still wait
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Still wait even if logout fails
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
     
     // When the profile contains an error code we treat it as invalid

@@ -142,9 +142,9 @@ export default function Home() {
     for (let i = 0; i < accountsToCheck.length; i++) {
       const acc = accountsToCheck[i];
       await checkAccount(i, { email: acc.email, password: acc.password });
-      // Longer delay between checks to ensure session cleanup
+      // Very long delay between checks to ensure complete session cleanup
       if (i < accountsToCheck.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
   }
