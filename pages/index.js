@@ -15,125 +15,39 @@ export default function Home() {
   // Unique IDs for list items are generated using array indices and labels;
 
   /**
-   * Fetch accounts from justpaste.it/nia8c only when 15 minutes have elapsed (server-side cache)
+   * Load pre-checked accounts from server. Server handles all fetching and checking.
+   * Client just displays the data and polls every 10 seconds for updates.
    */
   useEffect(() => {
-    async function fetchAndCheckAccounts() {
-      setIsLoading(true);
+    async function loadAccountsFromServer() {
       try {
-        const response = await fetch('/api/fetchAccounts');
+        const response = await fetch('/api/getAccounts');
         const data = await response.json();
         
         if (data.accounts && data.accounts.length > 0) {
-          // Remove duplicates based on email
-          const uniqueAccounts = [];
-          const seenEmails = new Set();
-          
-          for (const pair of data.accounts) {
-            if (!seenEmails.has(pair.email)) {
-              seenEmails.add(pair.email);
-              uniqueAccounts.push(pair);
-            }
-          }
-          
-          const newAccounts = uniqueAccounts.map((pair, idx) => ({
-            id: `Acc${idx + 1}`,
-            email: pair.email,
-            password: pair.password,
-            label: `Acc${idx + 1}`,
-            status: 'checking',
-            profileName: null,
-            error: null,
-          }));
-          setAccounts(newAccounts);
-          
-          const now = new Date();
-          setLastChecked(now);
-          
-          // Save to server cache
-          await fetch('/api/cache', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              accounts: newAccounts,
-              lastChecked: now.toISOString()
-            })
-          });
-          
-          // Check all accounts in parallel (fast but may have session conflicts)
-          newAccounts.forEach((acc, idx) => {
-            checkAccount(idx, { email: acc.email, password: acc.password });
-          });
+          setAccounts(data.accounts);
         }
+        
+        if (data.lastChecked) {
+          setLastChecked(new Date(data.lastChecked));
+        }
+        
+        setIsLoading(false);
       } catch (err) {
-        console.error('Failed to fetch accounts:', err);
-      } finally {
+        console.error('Failed to load accounts:', err);
         setIsLoading(false);
       }
     }
     
-    async function loadCacheAndDecide() {
-      try {
-        // Load from server cache on mount
-        const cacheResponse = await fetch('/api/cache');
-        const cachedData = await cacheResponse.json();
-        
-        if (cachedData.lastChecked && cachedData.accounts) {
-          const lastCheckedDate = new Date(cachedData.lastChecked);
-          const now = new Date();
-          const fifteenMinutes = 15 * 60 * 1000;
-          const timeSinceLastCheck = now - lastCheckedDate;
-          
-          if (timeSinceLastCheck < fifteenMinutes) {
-            // Less than 15 minutes - load from cache
-            setLastChecked(lastCheckedDate);
-            setAccounts(cachedData.accounts);
-            setIsLoading(false);
-            
-            // Set up timer for remaining time until 15 minutes
-            const remainingTime = fifteenMinutes - timeSinceLastCheck;
-            const timeoutId = setTimeout(() => {
-              fetchAndCheckAccounts();
-            }, remainingTime);
-            
-            // Set up 15-minute interval after initial timeout
-            const intervalId = setInterval(() => {
-              fetchAndCheckAccounts();
-            }, 900000);
-            
-            return () => {
-              clearTimeout(timeoutId);
-              clearInterval(intervalId);
-            };
-          } else {
-            // More than 15 minutes - fetch fresh data
-            await fetchAndCheckAccounts();
-          }
-        } else {
-          // No cache - fetch immediately
-          await fetchAndCheckAccounts();
-        }
-        
-        // Set up 15-minute interval after initial load
-        const intervalId = setInterval(() => {
-          fetchAndCheckAccounts();
-        }, 900000);
-        
-        return () => clearInterval(intervalId);
-      } catch (err) {
-        console.error('Failed to load cache:', err);
-        // Fallback: fetch immediately
-        await fetchAndCheckAccounts();
-        
-        const intervalId = setInterval(() => {
-          fetchAndCheckAccounts();
-        }, 900000);
-        
-        return () => clearInterval(intervalId);
-      }
-    }
+    // Load immediately on mount
+    loadAccountsFromServer();
     
-    loadCacheAndDecide();
+    // Poll every 10 seconds to get updates from server
+    const intervalId = setInterval(() => {
+      loadAccountsFromServer();
+    }, 10000);
+    
+    return () => clearInterval(intervalId);
   }, []);
 
   /**
@@ -153,133 +67,6 @@ export default function Home() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-
-  /**
-   * Recursively searches an object for a property whose key contains
-   * `username` or common profile name fields. Returns the first matching string it finds.
-   * @param {any} obj
-   */
-  function findUsername(obj) {
-    if (!obj || typeof obj !== 'object') return null;
-    
-    // Try common username fields first
-    const commonFields = ['username', 'Username', 'name', 'displayName', 'display_name', 'account_id', 'email'];
-    for (const field of commonFields) {
-      if (obj[field] && typeof obj[field] === 'string') {
-        return obj[field];
-      }
-    }
-    
-    // Recursively search nested objects
-    for (const key of Object.keys(obj)) {
-      const value = obj[key];
-      if (typeof value === 'string' && (key.toLowerCase().includes('username') || key.toLowerCase().includes('name'))) {
-        return value;
-      }
-      if (typeof value === 'object') {
-        const nested = findUsername(value);
-        if (nested) return nested;
-      }
-    }
-    return null;
-  }
-
-
-  /**
-   * Sends an account to the API to check its validity. Updates the account
-   * state when the response arrives.
-   * @param {number} index Index of the account in the state array
-   * @param {{email: string, password: string}} account
-   */
-  async function checkAccount(index, account) {
-    // Store the email for logging to avoid race conditions
-    const checkingEmail = account.email;
-    
-    try {
-      const res = await fetch('/api/checkSingleAccount', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: account.email, password: account.password }),
-      });
-      const result = await res.json();
-      console.log(`[${index}] Response for ${checkingEmail}:`, result);
-      
-      setAccounts((prev) => {
-        const updated = [...prev];
-        // Make sure the account at this index still exists AND has the same email
-        if (!updated[index] || updated[index].email !== checkingEmail) {
-          console.log(`[${index}] Skipping update - account mismatch or missing`);
-          return prev; // Return unchanged if mismatch
-        }
-        
-        if (!result) {
-          console.log(`[${index}] No result for ${checkingEmail}`);
-          updated[index] = { 
-            ...updated[index], 
-            status: 'invalid', 
-            profileName: null,
-            error: 'No response' 
-          };
-          // Save updated accounts to server cache
-          fetch('/api/cache', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accounts: updated })
-          }).catch(err => console.error('Failed to update cache:', err));
-          return updated;
-        }
-        
-        if (result.ok) {
-          const username = findUsername(result.profile);
-          console.log(`[${index}] VALID - Email: ${checkingEmail}, Username found: ${username}`);
-          updated[index] = {
-            ...updated[index],
-            status: 'valid',
-            profileName: username || updated[index].label,
-            error: null,
-          };
-        } else {
-          // Check for specific error code indicating invalid auth token
-          const code = result.errorCode || result.error;
-          console.log(`[${index}] INVALID - Email: ${checkingEmail}, Error: ${code}`);
-          updated[index] = {
-            ...updated[index],
-            status: 'invalid',
-            profileName: null,
-            error: code,
-          };
-        }
-        // Save updated accounts to server cache
-        fetch('/api/cache', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accounts: updated })
-        }).catch(err => console.error('Failed to update cache:', err));
-        return updated;
-      });
-    } catch (err) {
-      setAccounts((prev) => {
-        const updated = [...prev];
-        if (!updated[index] || updated[index].email !== checkingEmail) {
-          return prev;
-        }
-        updated[index] = { 
-          ...updated[index], 
-          status: 'invalid', 
-          profileName: null,
-          error: err.message 
-        };
-        // Save updated accounts to server cache
-        fetch('/api/cache', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accounts: updated })
-        }).catch(err => console.error('Failed to update cache:', err));
-        return updated;
-      });
-    }
-  }
 
 
   /**
