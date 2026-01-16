@@ -48,10 +48,8 @@ export default function Home() {
           }));
           setAccounts(newAccounts);
           
-          // Start checking all accounts
-          newAccounts.forEach((acc, idx) => {
-            checkAccount(idx, { email: acc.email, password: acc.password });
-          });
+          // Check accounts sequentially to avoid session conflicts
+          checkAccountsSequentially(newAccounts);
         }
       } catch (err) {
         console.error('Failed to fetch accounts:', err);
@@ -135,6 +133,20 @@ export default function Home() {
       }
     }
     return null;
+  }
+
+  /**
+   * Check accounts one by one sequentially to avoid session conflicts
+   */
+  async function checkAccountsSequentially(accountsToCheck) {
+    for (let i = 0; i < accountsToCheck.length; i++) {
+      const acc = accountsToCheck[i];
+      await checkAccount(i, { email: acc.email, password: acc.password });
+      // Small delay between checks
+      if (i < accountsToCheck.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
   }
 
   /**
@@ -304,22 +316,18 @@ export default function Home() {
     setCustomInput('');
     setShowCustomModal(false);
     
-    // Check the new accounts
-    newAccounts.forEach((acc, idx) => {
-      checkAccount(startIdx + idx, { email: acc.email, password: acc.password });
-    });
+    // Check the new accounts sequentially
+    checkAccountsSequentially(newAccounts.map((acc, idx) => ({
+      ...acc,
+      index: startIdx + idx
+    })));
   }
 
   /**
-   * Recheck all accounts
+   * Recheck all accounts - reload the page to fetch fresh data
    */
   function handleRecheck() {
-    setAccounts((prev) =>
-      prev.map((acc) => ({ ...acc, status: 'checking', profileName: null, error: null }))
-    );
-    accounts.forEach((acc, idx) => {
-      checkAccount(idx, { email: acc.email, password: acc.password });
-    });
+    window.location.reload();
   }
 
   // Retrieve the active account object based on activeId
