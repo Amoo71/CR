@@ -38,8 +38,20 @@ export default async function handler(req, res) {
       continue;
     }
     try {
-      await cr.login(email, password, region || undefined);
-      const profile = await cr.getProfile();
+      // Create a fresh Crunchyroll instance for each account to avoid session conflicts
+      const Crunchyroll = (await import('crunchyroll.js')).default;
+      const crInstance = new Crunchyroll();
+      
+      await crInstance.login(email, password, region || undefined);
+      const profile = await crInstance.getProfile();
+      
+      // Logout to clean up session
+      try {
+        await crInstance.logout();
+      } catch (logoutErr) {
+        // Ignore logout errors
+      }
+      
       // When the profile contains an error code we treat it as invalid
       if (profile && typeof profile === 'object' && profile.code) {
         results.push({ email, password, ok: false, errorCode: profile.code, error: profile.code });
