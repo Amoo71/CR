@@ -16,12 +16,17 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Force a small delay to ensure previous requests are done
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     await cr.login(email, password, region || undefined);
     const profile = await cr.getProfile();
     
-    // Logout immediately
+    // Logout immediately and wait for it
     try {
       await cr.logout();
+      // Extra delay after logout
+      await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err) {
       // Ignore logout errors
     }
