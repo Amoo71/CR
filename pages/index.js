@@ -189,6 +189,8 @@ export default function Home() {
             profileName: null,
             error: 'No response' 
           };
+          // Save updated accounts to localStorage
+          localStorage.setItem('accounts', JSON.stringify(updated));
           return updated;
         }
         
@@ -212,6 +214,8 @@ export default function Home() {
             error: code,
           };
         }
+        // Save updated accounts to localStorage
+        localStorage.setItem('accounts', JSON.stringify(updated));
         return updated;
       });
     } catch (err) {
@@ -226,6 +230,8 @@ export default function Home() {
           profileName: null,
           error: err.message 
         };
+        // Save updated accounts to localStorage
+        localStorage.setItem('accounts', JSON.stringify(updated));
         return updated;
       });
     }
