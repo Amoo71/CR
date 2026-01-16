@@ -7,20 +7,19 @@ import { useState, useEffect, useRef } from 'react';
  */
 export default function Home() {
   const [accounts, setAccounts] = useState([]);
-  const [inputValue, setInputValue] = useState('');
   const [activeId, setActiveId] = useState(null);
-  const [showCustomModal, setShowCustomModal] = useState(false);
-  const [customInput, setCustomInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [lastChecked, setLastChecked] = useState(null);
+  const [showOnlyWorking, setShowOnlyWorking] = useState(false);
   const popupRef = useRef(null);
-  const modalRef = useRef(null);
   // Unique IDs for list items are generated using array indices and labels;
 
   /**
-   * Fetch accounts from justpaste.it/nia8c on component mount
+   * Fetch accounts from justpaste.it/nia8c on component mount and every 15 minutes
    */
   useEffect(() => {
     async function fetchAccounts() {
+      setIsLoading(true);
       try {
         const response = await fetch('/api/fetchAccounts');
         const data = await response.json();
@@ -47,6 +46,7 @@ export default function Home() {
             error: null,
           }));
           setAccounts(newAccounts);
+          setLastChecked(new Date());
           
           // Check all accounts in parallel (fast but may have session conflicts)
           newAccounts.forEach((acc, idx) => {
@@ -60,7 +60,16 @@ export default function Home() {
       }
     }
     
+    // Fetch immediately on mount
     fetchAccounts();
+    
+    // Set up 15-minute interval (900000ms = 15 minutes)
+    const intervalId = setInterval(() => {
+      fetchAccounts();
+    }, 900000);
+    
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId);
   }, []);
 
   /**
@@ -75,37 +84,12 @@ export default function Home() {
           setActiveId(null);
         }
       }
-      if (modalRef.current && !modalRef.current.contains(event.target)) {
-        const isModalButton = event.target.closest('[data-modal-button]');
-        if (!isModalButton) {
-          setShowCustomModal(false);
-        }
-      }
     }
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  /**
-   * Extracts account pairs from a string. Accepts patterns like
-   * `email:password` or `email password`. Extra surrounding text is ignored.
-   * @param {string} text
-   * @returns {Array<{email: string, password: string}>}
-   */
-  function parseAccounts(text) {
-    const regex = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:[:\s]+([^\s]+))?/g;
-    const result = [];
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      const email = match[1];
-      const password = match[2];
-      if (email && password) {
-        result.push({ email, password });
-      }
-    }
-    return result;
-  }
 
   /**
    * Recursively searches an object for a property whose key contains
@@ -137,19 +121,6 @@ export default function Home() {
     return null;
   }
 
-  /**
-   * Check accounts one by one sequentially to avoid session conflicts
-   */
-  async function checkAccountsSequentially(accountsToCheck) {
-    for (let i = 0; i < accountsToCheck.length; i++) {
-      const acc = accountsToCheck[i];
-      await checkAccount(i, { email: acc.email, password: acc.password });
-      // Very long delay between checks to ensure complete session cleanup
-      if (i < accountsToCheck.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-    }
-  }
 
   /**
    * Sends an account to the API to check its validity. Updates the account
@@ -228,41 +199,6 @@ export default function Home() {
     }
   }
 
-  /**
-   * Handles the Enter key in the input field: parses accounts, adds them to
-   * state and triggers checking.
-   */
-  function handleKeyDown(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addAccountsFromInput();
-    }
-  }
-
-  /**
-   * Parses the current input value and appends new accounts to the list. Then
-   * clears the input and checks each newly added account.
-   */
-  function addAccountsFromInput() {
-    const text = inputValue.trim();
-    if (!text) return;
-    const pairs = parseAccounts(text);
-    setInputValue('');
-    if (pairs.length === 0) return;
-    setAccounts((prev) => {
-      const updated = [...prev];
-      pairs.forEach((pair) => {
-        const label = `Acc${updated.length + 1}`;
-        updated.push({ id: label, email: pair.email, password: pair.password, label, status: 'checking', profileName: null, error: null });
-      });
-      return updated;
-    });
-    // Check each newly added account
-    pairs.forEach((pair, idx) => {
-      const index = accounts.length + idx;
-      checkAccount(index, pair);
-    });
-  }
 
   /**
    * Handles clicking on a list item: toggles visibility of details for that
@@ -291,52 +227,6 @@ export default function Home() {
     }
   }
 
-  /**
-   * Clears all stored accounts and hides any open details popups.
-   */
-  function clearAll() {
-    setAccounts([]);
-    setActiveId(null);
-  }
-
-  /**
-   * Handles checking custom accounts from modal
-   */
-  function handleCustomCheck() {
-    const text = customInput.trim();
-    if (!text) return;
-    
-    const pairs = parseAccounts(text);
-    if (pairs.length === 0) return;
-    
-    const startIdx = accounts.length;
-    const newAccounts = pairs.map((pair, idx) => ({
-      id: `Custom${startIdx + idx + 1}`,
-      email: pair.email,
-      password: pair.password,
-      label: `Custom${startIdx + idx + 1}`,
-      status: 'checking',
-      profileName: null,
-      error: null,
-    }));
-    
-    setAccounts((prev) => [...prev, ...newAccounts]);
-    setCustomInput('');
-    setShowCustomModal(false);
-    
-    // Check the new accounts sequentially
-    checkAccountsSequentially(newAccounts.map((acc, idx) => ({
-      ...acc,
-      index: startIdx + idx
-    })));
-  }
-
-  /**
-   * Recheck all accounts - reload the page to fetch fresh data
-   */
-  function handleRecheck() {
-    window.location.reload();
-  }
 
   // Retrieve the active account object based on activeId
   const activeAccount = accounts.find((acc) => acc.id === activeId);
@@ -349,22 +239,24 @@ export default function Home() {
       {/* Title at top */}
       <h1 style={styles.title}>SoftRoll Hub</h1>
       
-      {/* Navbar with buttons */}
-      <div style={styles.navbar}>
-        <button
-          data-modal-button
-          onClick={() => setShowCustomModal(true)}
-          style={styles.navButton}
-        >
-          Check my Own!
-        </button>
-        <button
-          onClick={handleRecheck}
-          style={styles.navButton}
-        >
-          ReCheck
-        </button>
-      </div>
+      {/* Last Checked Timestamp */}
+      {lastChecked && (
+        <div style={styles.timestamp}>
+          Last Checked: {lastChecked.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        </div>
+      )}
+      
+      {/* Filter Toggle Button */}
+      <button
+        onClick={() => setShowOnlyWorking(!showOnlyWorking)}
+        style={{
+          ...styles.filterButton,
+          backgroundColor: showOnlyWorking ? 'rgba(76, 175, 80, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+          borderColor: showOnlyWorking ? 'rgba(76, 175, 80, 0.5)' : 'rgba(255, 255, 255, 0.15)',
+        }}
+      >
+        {showOnlyWorking ? 'Show All' : 'Show Working'}
+      </button>
 
       {/* Loading indicator */}
       {isLoading && (
@@ -373,7 +265,9 @@ export default function Home() {
 
       {/* Account list */}
       <ul style={styles.list}>
-        {accounts.map((acc) => (
+        {accounts
+          .filter(acc => !showOnlyWorking || acc.status === 'valid')
+          .map((acc) => (
           <li
             key={acc.id}
             data-account-item
@@ -399,15 +293,6 @@ export default function Home() {
         ))}
       </ul>
 
-      {/* Delete all button */}
-      {accounts.length > 0 && (
-        <button
-          onClick={clearAll}
-          style={{ ...styles.button, backgroundColor: '#f44336', marginTop: '1rem' }}
-        >
-          Delete all
-        </button>
-      )}
 
       {/* Account details popup */}
       {activeAccount && (
@@ -426,34 +311,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Custom input modal */}
-      {showCustomModal && (
-        <div style={styles.modalOverlay}>
-          <div ref={modalRef} style={styles.modal}>
-            <h2 style={styles.modalTitle}>Check Your Own Accounts</h2>
-            <textarea
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              placeholder="Paste your credentials here (email:password format)..."
-              style={styles.modalTextarea}
-            />
-            <div style={styles.modalButtons}>
-              <button
-                onClick={handleCustomCheck}
-                style={{ ...styles.button, backgroundColor: '#4caf50', flex: 1 }}
-              >
-                Check Now
-              </button>
-              <button
-                onClick={() => setShowCustomModal(false)}
-                style={{ ...styles.button, backgroundColor: '#666', flex: 1 }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -494,31 +351,26 @@ const styles = {
     WebkitTextFillColor: 'transparent',
     backgroundClip: 'text',
   },
-  navbar: {
-    display: 'flex',
-    gap: '0.75rem',
-    marginBottom: '2rem',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    backdropFilter: 'blur(20px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '16px',
-    padding: '0.5rem',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+  timestamp: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: '0.9rem',
+    marginBottom: '1rem',
     zIndex: 1,
+    fontWeight: '500',
   },
-  navButton: {
+  filterButton: {
     padding: '0.75rem 1.5rem',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     backdropFilter: 'blur(10px)',
     color: '#fff',
-    border: '1px solid rgba(255, 255, 255, 0.15)',
+    border: '1px solid',
     borderRadius: '12px',
     cursor: 'pointer',
     fontSize: '0.9rem',
     fontWeight: '500',
     transition: 'all 0.3s ease',
     boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+    marginBottom: '2rem',
+    zIndex: 1,
   },
   loadingText: {
     color: 'rgba(255, 255, 255, 0.6)',
