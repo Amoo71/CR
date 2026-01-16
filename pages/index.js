@@ -157,13 +157,12 @@ export default function Home() {
    */
   async function checkAccount(index, account) {
     try {
-      const res = await fetch('/api/checkAccounts', {
+      const res = await fetch('/api/checkSingleAccount', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accounts: [account] }),
+        body: JSON.stringify({ email: account.email, password: account.password }),
       });
-      const data = await res.json();
-      const result = data.results && data.results[0];
+      const result = await res.json();
       console.log(`[${index}] Response for ${account.email}:`, result);
       setAccounts((prev) => {
         const updated = [...prev];
