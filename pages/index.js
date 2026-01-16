@@ -1,19 +1,87 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 /**
- * A minimal, modern interface for managing many Crunchyroll accounts. Users can
- * paste credentials into the single input field at the bottom of the page in
- * almost any format. The component extracts email/password pairs, displays
- * them above the input as compact, rounded items and automatically checks
- * each account via an API route. Valid accounts turn green and display
- * their username; invalid accounts turn red. Clicking an item reveals a
- * popup with the account’s email and password along with a copy button.
+ * SoftRoll Hub - A modern dark glassy macOS-style interface for managing 
+ * Crunchyroll accounts. Auto-loads accounts from justpaste.it/nia8c and 
+ * provides checking functionality with beautiful UI.
  */
 export default function Home() {
   const [accounts, setAccounts] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [activeId, setActiveId] = useState(null);
+  const [showCustomModal, setShowCustomModal] = useState(false);
+  const [customInput, setCustomInput] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const popupRef = useRef(null);
+  const modalRef = useRef(null);
   // Unique IDs for list items are generated using array indices and labels;
+
+  /**
+   * Fetch accounts from justpaste.it/nia8c on component mount
+   */
+  useEffect(() => {
+    async function fetchAccounts() {
+      try {
+        const response = await fetch('https://justpaste.it/nia8c');
+        const html = await response.text();
+        
+        // Extract content from the HTML - look for the content body
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const contentBody = doc.querySelector('.mce-content-body') || doc.body;
+        const text = contentBody.textContent || '';
+        
+        const pairs = parseAccounts(text);
+        if (pairs.length > 0) {
+          const newAccounts = pairs.map((pair, idx) => ({
+            id: `Acc${idx + 1}`,
+            email: pair.email,
+            password: pair.password,
+            label: `Acc${idx + 1}`,
+            status: 'checking',
+            profileName: null,
+            error: null,
+          }));
+          setAccounts(newAccounts);
+          
+          // Start checking all accounts
+          newAccounts.forEach((acc, idx) => {
+            checkAccount(idx, { email: acc.email, password: acc.password });
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch accounts:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    
+    fetchAccounts();
+  }, []);
+
+  /**
+   * Handle clicks outside popup to close it
+   */
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (popupRef.current && !popupRef.current.contains(event.target)) {
+        // Check if click is on an account item
+        const isAccountItem = event.target.closest('[data-account-item]');
+        if (!isAccountItem) {
+          setActiveId(null);
+        }
+      }
+      if (modalRef.current && !modalRef.current.contains(event.target)) {
+        const isModalButton = event.target.closest('[data-modal-button]');
+        if (!isModalButton) {
+          setShowCustomModal(false);
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   /**
    * Extracts account pairs from a string. Accepts patterns like
@@ -175,16 +243,88 @@ export default function Home() {
     setActiveId(null);
   }
 
+  /**
+   * Handles checking custom accounts from modal
+   */
+  function handleCustomCheck() {
+    const text = customInput.trim();
+    if (!text) return;
+    
+    const pairs = parseAccounts(text);
+    if (pairs.length === 0) return;
+    
+    const startIdx = accounts.length;
+    const newAccounts = pairs.map((pair, idx) => ({
+      id: `Custom${startIdx + idx + 1}`,
+      email: pair.email,
+      password: pair.password,
+      label: `Custom${startIdx + idx + 1}`,
+      status: 'checking',
+      profileName: null,
+      error: null,
+    }));
+    
+    setAccounts((prev) => [...prev, ...newAccounts]);
+    setCustomInput('');
+    setShowCustomModal(false);
+    
+    // Check the new accounts
+    newAccounts.forEach((acc, idx) => {
+      checkAccount(startIdx + idx, { email: acc.email, password: acc.password });
+    });
+  }
+
+  /**
+   * Recheck all accounts
+   */
+  function handleRecheck() {
+    setAccounts((prev) =>
+      prev.map((acc) => ({ ...acc, status: 'checking', profileName: null, error: null }))
+    );
+    accounts.forEach((acc, idx) => {
+      checkAccount(idx, { email: acc.email, password: acc.password });
+    });
+  }
+
   // Retrieve the active account object based on activeId
   const activeAccount = accounts.find((acc) => acc.id === activeId);
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>Crunchyroll Account Manager</h1>
+      {/* Animated Background */}
+      <div style={styles.animatedBg}></div>
+      
+      {/* Title at top */}
+      <h1 style={styles.title}>SoftRoll Hub</h1>
+      
+      {/* Navbar with buttons */}
+      <div style={styles.navbar}>
+        <button
+          data-modal-button
+          onClick={() => setShowCustomModal(true)}
+          style={styles.navButton}
+        >
+          Check my Own!
+        </button>
+        <button
+          onClick={handleRecheck}
+          style={styles.navButton}
+        >
+          ReCheck
+        </button>
+      </div>
+
+      {/* Loading indicator */}
+      {isLoading && (
+        <div style={styles.loadingText}>Loading accounts...</div>
+      )}
+
+      {/* Account list */}
       <ul style={styles.list}>
         {accounts.map((acc) => (
           <li
             key={acc.id}
+            data-account-item
             onClick={() => toggleDetails(acc.id)}
             style={{
               ...styles.accountItem,
@@ -206,16 +346,20 @@ export default function Home() {
           </li>
         ))}
       </ul>
+
+      {/* Delete all button */}
       {accounts.length > 0 && (
         <button
           onClick={clearAll}
-          style={{ ...styles.button, backgroundColor: '#f44336', marginBottom: '1rem' }}
+          style={{ ...styles.button, backgroundColor: '#f44336', marginTop: '1rem' }}
         >
           Delete all
         </button>
       )}
+
+      {/* Account details popup */}
       {activeAccount && (
-        <div style={styles.popup}>
+        <div ref={popupRef} style={styles.popup}>
           <p style={{ margin: 0, marginBottom: '0.5rem' }}>
             <strong>{activeAccount.profileName || activeAccount.label}</strong>
           </p>
@@ -229,16 +373,35 @@ export default function Home() {
           </button>
         </div>
       )}
-      <div style={styles.inputContainer}>
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Paste credentials and press Enter…"
-          style={styles.inputField}
-        />
-      </div>
+
+      {/* Custom input modal */}
+      {showCustomModal && (
+        <div style={styles.modalOverlay}>
+          <div ref={modalRef} style={styles.modal}>
+            <h2 style={styles.modalTitle}>Check Your Own Accounts</h2>
+            <textarea
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              placeholder="Paste your credentials here (email:password format)..."
+              style={styles.modalTextarea}
+            />
+            <div style={styles.modalButtons}>
+              <button
+                onClick={handleCustomCheck}
+                style={{ ...styles.button, backgroundColor: '#4caf50', flex: 1 }}
+              >
+                Check Now
+              </button>
+              <button
+                onClick={() => setShowCustomModal(false)}
+                style={{ ...styles.button, backgroundColor: '#666', flex: 1 }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -248,81 +411,168 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
     minHeight: '100vh',
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#000',
     padding: '2rem 1rem',
     color: '#f5f5f5',
-    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  animatedBg: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'radial-gradient(ellipse at 20% 30%, rgba(40, 40, 50, 0.4) 0%, transparent 50%), radial-gradient(ellipse at 80% 70%, rgba(30, 30, 40, 0.3) 0%, transparent 50%), linear-gradient(180deg, #000 0%, #0a0a0a 100%)',
+    animation: 'gradientShift 15s ease infinite',
+    zIndex: 0,
   },
   title: {
+    marginTop: '1rem',
+    marginBottom: '1.5rem',
+    fontSize: '2.5rem',
+    fontWeight: '600',
+    letterSpacing: '-0.02em',
+    zIndex: 1,
+    background: 'linear-gradient(135deg, #fff 0%, #aaa 100%)',
+    WebkitBackgroundClip: 'text',
+    WebkitTextFillColor: 'transparent',
+    backgroundClip: 'text',
+  },
+  navbar: {
+    display: 'flex',
+    gap: '0.75rem',
+    marginBottom: '2rem',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backdropFilter: 'blur(20px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '16px',
+    padding: '0.5rem',
+    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+    zIndex: 1,
+  },
+  navButton: {
+    padding: '0.75rem 1.5rem',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backdropFilter: 'blur(10px)',
+    color: '#fff',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    transition: 'all 0.3s ease',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+  },
+  loadingText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontSize: '1rem',
     marginBottom: '1rem',
-    fontSize: '1.5rem',
+    zIndex: 1,
   },
   list: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: '0.5rem',
     width: '100%',
-    maxWidth: '600px',
-    marginBottom: '2rem',
+    maxWidth: '800px',
+    marginBottom: '1rem',
     padding: 0,
     listStyle: 'none',
+    zIndex: 1,
   },
   accountItem: {
-    padding: '0.5rem 0.75rem',
-    borderRadius: '9999px',
+    padding: '0.6rem 1rem',
+    borderRadius: '20px',
     border: '1px solid',
     cursor: 'pointer',
     transition: 'all 0.3s ease',
     userSelect: 'none',
     fontSize: '0.9rem',
+    fontWeight: '500',
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
   },
   popup: {
     position: 'fixed',
-    bottom: '120px',
+    top: '50%',
     left: '50%',
-    transform: 'translateX(-50%)',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    borderRadius: '8px',
-    padding: '1rem',
-    boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
+    transform: 'translate(-50%, -50%)',
+    backgroundColor: 'rgba(20, 20, 20, 0.95)',
+    backdropFilter: 'blur(40px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    borderRadius: '20px',
+    padding: '1.5rem',
+    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
     color: '#f5f5f5',
-    zIndex: 1000,
-    width: '280px',
+    zIndex: 2000,
+    width: '320px',
     textAlign: 'center',
   },
-  inputContainer: {
-    width: '100%',
-    maxWidth: '600px',
+  modalOverlay: {
     position: 'fixed',
-    bottom: '20px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    border: '1px solid rgba(255,255,255,0.2)',
-    backdropFilter: 'blur(10px)',
-    borderRadius: '30px',
-    padding: '0.5rem 1rem',
-    boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backdropFilter: 'blur(8px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3000,
   },
-  inputField: {
+  modal: {
+    backgroundColor: 'rgba(20, 20, 20, 0.95)',
+    backdropFilter: 'blur(40px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    borderRadius: '20px',
+    padding: '2rem',
+    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+    width: '90%',
+    maxWidth: '500px',
+  },
+  modalTitle: {
+    margin: '0 0 1rem 0',
+    fontSize: '1.5rem',
+    fontWeight: '600',
+    color: '#fff',
+  },
+  modalTextarea: {
     width: '100%',
-    background: 'transparent',
-    border: 'none',
+    minHeight: '150px',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '12px',
+    padding: '1rem',
+    color: '#fff',
+    fontSize: '0.9rem',
+    fontFamily: 'inherit',
+    resize: 'vertical',
     outline: 'none',
-    color: '#f5f5f5',
-    fontSize: '1rem',
+    marginBottom: '1rem',
+  },
+  modalButtons: {
+    display: 'flex',
+    gap: '0.75rem',
   },
   button: {
-    padding: '0.5rem',
+    padding: '0.75rem 1rem',
     backgroundColor: '#ff751a',
     color: '#fff',
     border: 'none',
-    borderRadius: '6px',
+    borderRadius: '12px',
     cursor: 'pointer',
     fontSize: '0.9rem',
+    fontWeight: '500',
+    transition: 'all 0.3s ease',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
   },
 };
