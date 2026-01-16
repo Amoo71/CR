@@ -17,22 +17,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Long delay to ensure previous request fully completed
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Login with fresh credentials
+    // Login with credentials
     await cr.login(email, password, region || undefined);
     
-    // Get profile immediately
+    // Get profile
     const profile = await cr.getProfile();
     
-    // Logout and wait for complete cleanup
+    // Logout
     try {
       await cr.logout();
-      await new Promise(resolve => setTimeout(resolve, 500));
     } catch (err) {
-      // Still wait even if logout fails
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Ignore logout errors
     }
     
     // When the profile contains an error code we treat it as invalid

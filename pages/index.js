@@ -48,8 +48,10 @@ export default function Home() {
           }));
           setAccounts(newAccounts);
           
-          // Check accounts sequentially to avoid session conflicts
-          checkAccountsSequentially(newAccounts);
+          // Check all accounts in parallel (fast but may have session conflicts)
+          newAccounts.forEach((acc, idx) => {
+            checkAccount(idx, { email: acc.email, password: acc.password });
+          });
         }
       } catch (err) {
         console.error('Failed to fetch accounts:', err);
