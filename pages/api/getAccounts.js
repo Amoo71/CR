@@ -1,3 +1,5 @@
+import { parseAccountsFromHtml } from '../../lib/parseAccounts';
+
 /**
  * API that returns cached accounts or triggers a fetch/check if 15 minutes have passed
  * This is the ONLY endpoint the client calls - no checking happens on client side
@@ -22,26 +24,26 @@ async function fetchAndCheckAccounts() {
   
   try {
     console.log('Fetching accounts from justpaste.it...');
-    const response = await fetch('https://justpaste.it/nia8c');
-    const html = await response.text();
-    
-    // Extract email:password patterns
-    const emailPasswordRegex = /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})[:\s]+([^\s<]+)/g;
-    const matches = [];
-    let match;
-    
-    while ((match = emailPasswordRegex.exec(html)) !== null) {
-      matches.push({
-        email: match[1],
-        password: match[2]
-      });
+    const response = await fetch('https://justpaste.it/nia8c', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; SoftRollHub/1.0; +https://justpaste.it)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load source page (${response.status})`);
     }
-    
+
+    const html = await response.text();
+    const parsedAccounts = parseAccountsFromHtml(html);
+
     // Remove duplicates
     const uniqueAccounts = [];
     const seenEmails = new Set();
     
-    for (const pair of matches) {
+    for (const pair of parsedAccounts) {
       if (!seenEmails.has(pair.email)) {
         seenEmails.add(pair.email);
         uniqueAccounts.push(pair);
